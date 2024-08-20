@@ -145,7 +145,7 @@ VideoReader::~VideoReader(){
 
 void VideoReader::SetVideoStream(int stream_nb) {
     if (!fmt_ctx_) return;
-    AVCodec *dec;
+    const AVCodec *dec;
     int st_nb = av_find_best_stream(fmt_ctx_.get(), AVMEDIA_TYPE_VIDEO, stream_nb, -1, &dec, 0);
     // LOG(INFO) << "find best stream: " << st_nb;
     CHECK_GE(st_nb, 0) << "ERROR cannot find video stream with wanted index: " << stream_nb;
@@ -554,9 +554,13 @@ double VideoReader::GetRotation() const {
     if (rotate && *rotate->value && strcmp(rotate->value, "0"))
         theta = atof(rotate->value);
 
-    uint8_t* displaymatrix = av_stream_get_side_data(active_st, AV_PKT_DATA_DISPLAYMATRIX, NULL);
+    auto* displaymatrix = av_packet_side_data_get(
+        active_st->codecpar->coded_side_data,
+        active_st->codecpar->nb_coded_side_data,
+        AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX);
+
     if (displaymatrix && !theta)
-        theta = -av_display_rotation_get((int32_t*) displaymatrix);
+        theta = -av_display_rotation_get((int32_t*) displaymatrix->data);
 
     theta = std::fmod(theta, 360);
     if(theta < 0) theta += 360;
