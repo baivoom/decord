@@ -17,9 +17,12 @@
 #include <functional>
 #include <atomic>
 
+
 #ifdef __cplusplus
+
 extern "C" {
 #endif
+#include <libavcodec/bsf.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
@@ -34,6 +37,7 @@ extern "C" {
 #include <libavutil/display.h>
 #include <libavutil/file.h>
 #include <libswresample/swresample.h>
+#include <libavcodec/bsf.h>
 #ifdef DECORD_USE_LIBAVDEVICE
 #include <libavdevice/avdevice.h>
 #endif
