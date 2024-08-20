@@ -128,7 +128,7 @@ namespace decord {
                 pCodecParameters = tempCodecParameters;
                 originalSampleRate = tempCodecParameters->sample_rate;
                 if (targetSampleRate == -1) targetSampleRate = originalSampleRate;
-                numChannels = tempCodecParameters->channels;
+                numChannels = tempCodecParameters->ch_layout.nb_channels;
                 break;
             }
         }
@@ -148,7 +148,6 @@ namespace decord {
         if (codecOpenRet < 0) {
             char errstr[200];
             av_strerror(codecOpenRet, errstr, 200);
-            avcodec_close(pCodecContext);
             avcodec_free_context(&pCodecContext);
             avformat_close_input(&pFormatContext);
             LOG(FATAL) << "ERROR open codec through avcodec_open2: " << errstr;
@@ -210,7 +209,6 @@ namespace decord {
         // clean up
         av_frame_free(&pFrame);
         av_packet_free(&pPacket);
-        avcodec_close(pCodecContext);
         swr_close(swr);
         swr_free(&swr);
         avcodec_free_context(&pCodecContext);
@@ -229,7 +227,7 @@ namespace decord {
         // allocate resample buffer
         float** outBuffer;
         int outLinesize = 0;
-        int outNumChannels = av_get_channel_layout_nb_channels(mono ? AV_CH_LAYOUT_MONO : pFrame->channel_layout);
+        int outNumChannels = pFrame->ch_layout.nb_channels;
         numChannels = outNumChannels;
         int outNumSamples = av_rescale_rnd(pFrame->nb_samples,
                                            this->targetSampleRate, pFrame->sample_rate, AV_ROUND_UP);
@@ -274,26 +272,96 @@ namespace decord {
         }
     }
 
+
     void AudioReader::InitSWR(AVCodecContext *pCodecContext) {
         int ret = 0;
-        // Set resample ctx
+
+        // Allocate a new resample context for converting audio formats
         this->swr = swr_alloc();
         if (!this->swr) {
             LOG(FATAL) << "ERROR Failed to allocate resample context";
+            return;
         }
-        if (pCodecContext->channel_layout == 0) {
-            pCodecContext->channel_layout = av_get_default_channel_layout( pCodecContext->channels );
+
+        // Set input channel layout
+        // If the channel layout is not set, use the default layout based on the number of channels
+        if (pCodecContext->ch_layout.nb_channels == 0) {
+            av_channel_layout_default(&pCodecContext->ch_layout, mono ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO);
         }
-        av_opt_set_channel_layout(this->swr, "in_channel_layout",  pCodecContext->channel_layout, 0);
-        av_opt_set_channel_layout(this->swr, "out_channel_layout", mono ? AV_CH_LAYOUT_MONO : pCodecContext->channel_layout,  0);
-        av_opt_set_int(this->swr, "in_sample_rate",     pCodecContext->sample_rate,                0);
-        av_opt_set_int(this->swr, "out_sample_rate",    this->targetSampleRate,                0);
-        av_opt_set_sample_fmt(this->swr, "in_sample_fmt",  pCodecContext->sample_fmt, 0);
-        av_opt_set_sample_fmt(this->swr, "out_sample_fmt", AV_SAMPLE_FMT_FLTP,  0);
-        if ((ret = swr_init(this->swr)) < 0) {
-            LOG(FATAL) << "ERROR Failed to initialize resample context";
-        }
+
+        AVChannelLayout mono_layout = AV_CHANNEL_LAYOUT_MONO;
+
+        while(true) {
+
+            if ((ret = av_opt_set_chlayout(this->swr, "in_chlayout", &pCodecContext->ch_layout, 0)) < 0) {
+                LOG(FATAL) << "ERROR: Failed to set input channel layout, ret = " << ret << std::endl;
+                break;
+            }
+
+            // Set the output channel layout in the resample context
+            if (av_opt_set_chlayout(this->swr, "out_chlayout", mono ? &mono_layout : &pCodecContext->ch_layout, 0) < 0) {
+                LOG(FATAL) << "ERROR: Failed to set output channel layout" << std::endl;
+                break;
+            }
+
+            // Set the input sample rate in the resample context
+            if (av_opt_set_int(this->swr, "in_sample_rate", pCodecContext->sample_rate, 0) < 0) {
+                LOG(FATAL) << "ERROR: Failed to set input sample rate" << std::endl;
+                break;
+            }
+
+            // Set the output sample rate in the resample context
+            if (av_opt_set_int(this->swr, "out_sample_rate", this->targetSampleRate, 0) < 0) {
+                LOG(FATAL) << "ERROR: Failed to set output sample rate" << std::endl;
+                break;
+            }
+
+            // Set the input sample format in the resample context
+            if (av_opt_set_sample_fmt(this->swr, "in_sample_fmt", pCodecContext->sample_fmt, 0) < 0) {
+                LOG(FATAL) << "ERROR: Failed to set input sample format" << std::endl;
+                break;
+            }
+
+            // Set the output sample format in the resample context
+            if (av_opt_set_sample_fmt(this->swr, "out_sample_fmt", AV_SAMPLE_FMT_FLTP, 0) < 0) {
+                LOG(FATAL) << "ERROR: Failed to set output sample format" << std::endl;
+                break;
+            }
+
+            // Initialize the resample context with the specified parameters
+            if ((ret = swr_init(this->swr)) < 0) {
+                LOG(FATAL) << "ERROR: Failed to initialize resample context, ret = " << ret << std::endl;
+                break;
+            }
+
+            return;
+        };
+
+        av_channel_layout_uninit(&mono_layout);
+        swr_free(&this->swr);
+
     }
+
+//    void AudioReader::InitSWR(AVCodecContext *pCodecContext) {
+//        int ret = 0;
+//        // Set resample ctx
+//        this->swr = swr_alloc();
+//        if (!this->swr) {
+//            LOG(FATAL) << "ERROR Failed to allocate resample context";
+//        }
+//        if (pCodecContext->channel_layout == 0) {
+//            pCodecContext->channel_layout = av_get_default_channel_layout( pCodecContext->channels );
+//        }
+//        av_opt_set_channel_layout(this->swr, "in_channel_layout",  pCodecContext->channel_layout, 0);
+//        av_opt_set_channel_layout(this->swr, "out_channel_layout", mono ? AV_CH_LAYOUT_MONO : pCodecContext->channel_layout,  0);
+//        av_opt_set_int(this->swr, "in_sample_rate",     pCodecContext->sample_rate,                0);
+//        av_opt_set_int(this->swr, "out_sample_rate",    this->targetSampleRate,                0);
+//        av_opt_set_sample_fmt(this->swr, "in_sample_fmt",  pCodecContext->sample_fmt, 0);
+//        av_opt_set_sample_fmt(this->swr, "out_sample_fmt", AV_SAMPLE_FMT_FLTP,  0);
+//        if ((ret = swr_init(this->swr)) < 0) {
+//            LOG(FATAL) << "ERROR Failed to initialize resample context";
+//        }
+//    }
 
     void AudioReader::ToNDArray() {
         if (outputVector.empty()) return;
